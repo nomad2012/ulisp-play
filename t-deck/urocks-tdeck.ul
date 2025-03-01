@@ -2,32 +2,60 @@
 ;;
 
 ;;
-;; Adafruit PyBadge/EdgeBadge utility functions
+;; LilyGo T-Deck utility functions
 ;;
 
-(defvar *buttonB* 128)
-(defvar *buttonA* 64)
-(defvar *buttonSTART* 32)
-(defvar *buttonSELECT* 16)
-(defvar *buttonRIGHT* 8)
-(defvar *buttonDOWN* 4)
-(defvar *buttonUP* 2)
-(defvar *buttonLEFT* 1)
+(defvar *tb-up-pin* 3)
+(defvar *tb-down-pin* 15)
+(defvar *tb-left-pin* 1)
+(defvar *tb-right-pin* 2)
+(defvar *tb-button-pin* 0)
 
-(defun read-badge-buttons ()
-  (let ((buttons 0) (clock 48) (data 49) (latch 50))
-    (pinmode clock t) (digitalwrite clock 0)
-    (pinmode latch t) (digitalwrite latch 1)
-    (pinmode data nil)
-    (digitalwrite latch 0) (digitalwrite latch 1)
-    (dotimes (b 8 buttons)
-      (setq buttons
-       (logior (ash buttons 1) (if (digitalread data) 1 0)))
-      (digitalwrite clock 1) (digitalwrite clock 0))))
+(defvar *tb-up-state* nil)
+(defvar *tb-up-old-state* nil)
+(defvar *tb-down-state* nil)
+(defvar *tb-down-old-state* nil)
+(defvar *tb-left-state* nil)
+(defvar *tb-left-old-state* nil)
+(defvar *tb-right-state* nil)
+(defvar *tb-right-old-state* nil)
 
+(defvar dx 0)
+(defvar dy 0)
+(defvar tb-clicked nil)
 
-(defun button-pressed (buttons mask)
-  (= (logand buttons mask) mask))
+(defun tb-init ()
+  (pinmode *tb-up-pin* :input-pullup)
+  (pinmode *tb-down-pin* :input-pullup)
+  (pinmode *tb-left-pin* :input-pullup)
+  (pinmode *tb-right-pin* :input-pullup)
+  (pinmode *tb-button-pin* :input-pullup)
+  (setq *tb-up-old-state* (digitalread *tb-up-pin*))
+  (setq *tb-down-old-state* (digitalread *tb-down-pin*))
+  (setq *tb-left-old-state* (digitalread *tb-left-pin*))
+  (setq *tb-right-old-state* (digitalread *tb-right-pin*)))
+  
+
+(defun tb-read ()
+  (setq dx 0)
+  (setq dy 0)
+  (setq *tb-up-state* (digitalread *tb-up-pin*))
+  (setq *tb-down-state* (digitalread *tb-down-pin*))
+  (setq *tb-left-state* (digitalread *tb-left-pin*))
+  (setq *tb-right-state* (digitalread *tb-right-pin*))
+  (if (not (equal *tb-up-state* *tb-up-old-state*))
+      (setq dy -1)
+      (if (not (equal *tb-down-state* *tb-down-old-state*))
+          (setq dy 1)))
+  (if (not (equal *tb-left-state* *tb-left-old-state*))
+      (setq dx -1)
+      (if (not (equal *tb-right-state* *tb-right-old-state*))
+          (setq dx 1)))
+  (setq tb-clicked (not (digitalread *tb-button-pin*)))
+  (setq *tb-up-old-state* *tb-up-state*)
+  (setq *tb-down-old-state* *tb-down-state*)
+  (setq *tb-left-old-state* *tb-left-state*)
+  (setq *tb-right-old-state* *tb-right-state*))
 
 
 (defun rgb (r g b)
@@ -99,8 +127,8 @@
    
 ;; constants
 
-(defvar *display-width* 160)
-(defvar *display-height* 128)
+(defvar *display-width* 320)
+(defvar *display-height* 240)
 (defvar *center-x* (/ *display-width* 2))
 (defvar *center-y* (/ *display-height* 2))
 (defvar *num-rocks* 3)
@@ -180,7 +208,6 @@
 
 ;;; handle ship-rock collision
 (defun ship-collide (r)
-  (dotimes (i 5) (set-neopixel-color i 255 0 0))
   (draw-mob ship 0)
   (when (> *lives* 0)
     (decf *lives*)
@@ -216,6 +243,7 @@
     (dolist (s shots)
       (if (intersects? s r)
           (shot-collide s r)))))
+
     ;(dolist (r2 rocks)
     ;  (if (and (not (eq r r2)) (intersects? r r2))
     ;      (rock-collide r r2)))))
@@ -302,6 +330,7 @@
        
   
 (defun init ()
+  (tb-init)
   (fill-screen)
   (defvar score 0)
   (defvar rocks nil)
@@ -332,20 +361,17 @@
   (loop
    (setf *frame-start* (millis))
    (if (null rocks) (init-rocks))
-   (setf *buttons* (read-badge-buttons))
+   (tb-read)
    (dolist (r rocks) (draw-mob r 0))
    (dolist (s shots) (draw-mob s 0))
    (draw-mob ship 0)
-   (if (button-pressed *buttons* *buttonUP*) (accel-mob ship (list *ship-thrust* (cdr (assoc 'facing ship)))))
-   (if (button-pressed *buttons* *buttonLEFT*) (rotate-mob ship (- 0.0 *rotate-vel*)))
-   (if (button-pressed *buttons* *buttonRIGHT*) (rotate-mob ship *rotate-vel*))
-   (if (button-pressed *buttons* *buttonA*) (fire-shot))
-   (if (button-pressed *buttons* *buttonSELECT*) (return))
-   (dotimes (i *lives*) (set-neopixel-color i 0 1 0))
-   (dotimes (i (- 5 *lives*)) (set-neopixel-color (- 4 i) 0 0 0))
+   (if (< dy 0) (accel-mob ship (list *ship-thrust* (cdr (assoc 'facing ship)))))
+   (if (< dx 0) (rotate-mob ship (- 0.0 *rotate-vel*)))
+   (if (> dx 0) (rotate-mob ship *rotate-vel*))
+   (if tb-clicked (fire-shot))
    (when (<= *lives* 0)
-       (game-over)
-       (return))
+      (game-over)
+      (return))
    (dolist (r rocks)
      (rotate-mob r (cdr (assoc 'rotation r)))
      (update-mob-pos r)
@@ -368,6 +394,7 @@
 (defvar flash nil)
 
 (defun attract-mode ()
+  (tb-init)
   (fill-screen)
   (loop
     (setf flash (not flash))
@@ -379,18 +406,16 @@
      (set-cursor 15 80)
      (if flash (set-text-color (rgb 0 255 0) 0) (set-text-color (rgb 0 0 0) 0))
      (format str "PRESS START"))
-    (setf *buttons* (read-badge-buttons))
-    (when (button-pressed *buttons* *buttonSTART*)
+    (tb-read)
+    (when tb-clicked
       (play-game))
-    (when (button-pressed *buttons* *buttonSELECT*)
-      (fill-screen)
-      (return))
     (delay 100)))
 
 (attract-mode)
 
 (play-game)
 ~
+(pprint attract-mode)
 
 (save-image attract-mode)
 (load-image)
