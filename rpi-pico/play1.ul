@@ -1,0 +1,152 @@
+;; play with uLisp on raspberry pi pico (or Teensy 4.0!)
+
+;; load the following to set C-x C-e to send expressions to /dev/ttyUSB0 serial term
+(load "~/.emacs.d/init-ulisp.el")
+
+(+ 3 4)
+
+
+(defun fac (n)
+  (if (<= n 1)
+      1
+    (* n (fac (- n 1)))))
+
+(fac 1)
+(fac 4)
+;; largest integer fac
+(fac 12)
+;; it switches to floating point here
+(fac 13)
+(fac 34)
+(fac 35)
+
+(for-millis () (dotimes (x 1000) (fac 34)))
+(for-millis () (dotimes (x 1200000) (+)))
+
+(defun factr(n acc)
+  (if (<= n 1)
+      acc
+      (factr (- n 1) (* n acc))))
+
+(defun fac2(n) (factr n 1))
+
+(fac2 1)
+(fac2 4)
+(fac2 34)
+(fac2 35)
+(for-millis () (dotimes (x 1000) (fac2 34)))
+
+
+;; highest integer is 2^31 - 1
+(+ (expt 2 30) (- (expt 2 30) 1))
+;; this switches to float
+(expt 2 31)
+
+;; which has the side effect that the following returns nil
+(> (expt 2 31) (+ (expt 2 30) (- (expt 2 30) 1)))
+
+;; rpi-pico builtin LED
+(defvar *led* 25)
+
+;; ESP32 and Teensy 4.0 builtin LED
+(defvar *led* 13)
+
+(defun blink (&optional x)
+  "blink the builtin LED"
+  (pinmode *led* :output)
+  (digitalwrite *led* x)
+  (delay 1000)
+  (blink (not x)))
+
+(blink)
+
+;; exit programs and return to REPL with "~"
+~
+
+
+;; this doesn't work on ESP32 (invalid pin for analogwrite)
+(defun pulse ()
+  "PWM-pulse the builtin LED"
+  (let (down)
+    (loop
+      (dotimes (x 256) 
+        (delay 4)
+        (analogwrite *led* (if down (- 255 x) x)))
+      (setq down (not down)))))
+
+(pulse)
+~
+(pinmode *led* :output)
+(digitalwrite *led* :low)
+
+;; this works
+(digitalwrite *led* t)
+(digitalwrite *led* nil)
+
+;; this also works
+(digitalwrite *led* 1)
+(digitalwrite *led* 0)
+
+;; and this
+(digitalwrite *led* :high)
+(digitalwrite *led* :low)
+
+(wifi-connect "GL-AR750S-72a" "goodlife")
+
+(defun println (x s) (princ x s) (princ #\return s) (princ #\newline s))
+
+(defun webpage ()
+  (with-client (s "www.ulisp.com" 80)
+    (println "GET /rss?1DQ5 HTTP/1.0" s)
+    (println "Host: www.ulisp.com" s)
+    (println "Connection: close" s) 
+    (println "" s)
+    (loop (unless (zerop (available s)) (return)))
+    (loop
+     (when (zerop (available s)) (return))
+     (princ (read-line s))
+     (terpri))))
+
+(webpage)
+
+
+(defun values () nil)
+
+
+
+(print "Hello")
+(print (read-line))
+
+(pprintall)
+
+(save-image)
+(load-image)
+
+
+;; neopixels
+
+(dotimes (i 5)
+  (set-neopixel-color i 0 0 0))
+
+(dotimes (i 255)
+  (set-neopixel-color (mod i 5) (- 255 i) (mod i 64) (mod i 128))
+  (delay 20))
+
+
+
+
+(defun triangles ()
+  (with-gfx (str)
+    (set-text-size 2)
+    (dotimes (i 5)
+      (dotimes (j (- 5 i))
+        (princ " " str))
+      (dotimes (j (+ 1 (* i 2)))
+        (princ "*" str))
+      (terpri str))))
+
+(triangles)
+
+(with-gfx (str) (pprint triangles str) (terpri str) (terpri str))
+(fill-screen)
+(pprint triangles)

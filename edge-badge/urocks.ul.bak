@@ -1,0 +1,331 @@
+;; ulisp asteroids-like game
+;;
+
+;;
+;; Adafruit PyBadge/EdgeBadge utility functions
+;;
+
+(defvar *buttonB* 128)
+(defvar *buttonA* 64)
+(defvar *buttonSTART* 32)
+(defvar *buttonSELECT* 16)
+(defvar *buttonRIGHT* 8)
+(defvar *buttonDOWN* 4)
+(defvar *buttonUP* 2)
+(defvar *buttonLEFT* 1)
+
+(defun read-badge-buttons ()
+  (let ((buttons 0) (clock 48) (data 49) (latch 50))
+    (pinmode clock t) (digitalwrite clock 0)
+    (pinmode latch t) (digitalwrite latch 1)
+    (pinmode data nil)
+    (digitalwrite latch 0) (digitalwrite latch 1)
+    (dotimes (b 8 buttons)
+      (setq buttons
+       (logior (ash buttons 1) (if (digitalread data) 1 0)))
+      (digitalwrite clock 1) (digitalwrite clock 0))))
+
+
+(read-badge-buttons)
+
+(defun button-pressed (buttons mask)
+  (= (logand buttons mask) mask))
+
+;; vector math functions
+
+(defvar pi   3.1415927)
+(defvar 2pi  6.2831853)
+(defvar pi/2 1.5707963)
+(defvar pi/4 0.7853982)
+
+(defun vector-add (a b)
+  (mapcar #'+ a b))
+
+(defun vector-scale (v factor)
+  (mapcar #'* v (list factor factor)))
+
+(defun vector-sub (a b)
+  (mapcar #'- a b))
+
+(defun vector-dist (a b)
+  (sqrt (apply #'+
+               (mapcar (lambda (x)
+                         (expt x 2))
+                       (vector-sub a b)))))
+
+(defun intersects? (mob1 mob2)
+  (< (vector-distance (cdr (assoc 'pos mob1)) (cdr (assoc 'pos mob2)))
+     (+ (cdr (assoc 'radius mob1)) (cdr (assoc 'radius mob2)))))
+
+(defvar d->r (/ pi 180.0))
+
+(defun deg->rad (degs)
+  (* degs d->r))
+
+(defvar r->d (/ 180.0 pi))
+
+(defun rad->deg (rads)
+  (* rads r->d))
+
+(defun polar->rect (pt)
+  (list (* (car pt) (cos (cadr pt)))
+        (* (car pt) (sin (cadr pt)))))
+
+(defun rect->polar (pt)
+  (list (sqrt (+ (* (car pt) (car pt)) (* (cadr pt) (cadr pt))))
+        (atan (/ (cadr pt) (car pt)))))
+
+(defun reduce (fn lst)
+  (if (null (cdr lst)) (car lst)
+    (funcall fn (car lst) (reduce fn (cdr lst)))))
+
+(defun remove (x lst)
+  (mapcan #'(lambda (y) (unless (eq x y) (list y))) lst))
+
+(defun remove-if (tst lst)
+  (mapcan #'(lambda (x) (unless (funcall tst x) (list x))) lst))
+
+(defun draw-polygon (vertices color)
+  (let ((point (first vertices)))
+    (dolist (next (reverse vertices))
+      (draw-line (round (first point)) (round (second point))
+                 (round (first next)) (round (second next))
+                 color)
+      (setf point next))))
+
+   
+;; constants
+
+(defvar *display-width* 160)
+(defvar *display-height* 128)
+(defvar *center-x* (/ *display-width* 2))
+(defvar *center-y* (/ *display-height* 2))
+(defvar *num-rocks* 3)
+(defvar *rock-sides* 12)
+(defvar *rock-radius* 20)
+(defvar *rock-max-rotation* (/ pi 8))
+(defvar *ship-radius* 12)
+(defvar *rotate-vel* (/ pi 16))
+(defvar *ship-thrust* 0.2)
+(defvar *max-shots* 3)
+(defvar *min-shot-delay* 400)
+(defvar *shot-vel* 3)
+(defvar *shot-life* 2000)
+
+;; game state
+
+;; mob - mobile object
+;; pos (x y)
+;; vel (r theta)
+;; radius r
+;; facing theta
+;; vertices (list (r theta))
+(defun make-mob (pos vel accel radius facing rotation vertices)
+  (list
+   (cons 'pos pos)
+   (cons 'vel vel)
+   (cons 'accel accel)
+   (cons 'radius radius)
+   (cons 'facing facing)
+   (cons 'rotation rotation)
+   (cons 'vertices vertices)))
+
+
+(defun screen-points (mob)
+  (let ((pos (cdr (assoc 'pos mob)))
+        (facing (cdr (assoc 'facing mob)))
+        (vertices (cdr (assoc 'vertices mob))))
+    (mapcar (lambda (pt) (vector-add pos pt))
+            (mapcar polar->rect
+                    (mapcar (lambda (pt) (list (car pt) (+ (cadr pt) facing))) vertices)))))
+
+
+(defun draw-mob (mob color)
+  (draw-polygon (screen-points mob) color))
+
+
+(defun wrap-mob-at-screen-edge (mob)
+  (let* ((pos (cdr (assoc 'pos mob)))
+         (x (car pos))
+         (y (cadr pos)))
+    (setf x (mod x *display-width*))
+    (setf y (mod y *display-height*))
+    (setf (cdr (assoc 'pos mob)) (list x y))))
+
+
+(defun update-mob-pos (mob)
+  (setf (cdr (assoc 'pos mob)) (vector-add (cdr (assoc 'pos mob)) (cdr (assoc 'vel mob))))
+  (wrap-mob-at-screen-edge mob))
+
+
+(defun rotate-mob (mob theta)
+  (setf (cdr (assoc 'facing mob)) (+ (cdr (assoc 'facing mob)) theta)))
+
+
+(defun accel-mob (mob accel-vector)
+  (setf (cdr (assoc 'vel mob))
+        (vector-add (cdr (assoc 'vel mob)) (polar->rect accel-vector))))
+
+(defun ship-collide (r)
+  (draw-mob ship 0)
+  (when (> *lives* 0)
+    (decf *lives*)
+    (setf (cdr (assoc 'pos ship)) (list *center-x* *center-y*))
+    (setf (cdr (assoc 'facing ship)) (deg->rad -90))
+    (setf (cdr (assoc 'vel ship)) '(0 0)))
+  (draw-mob r 0)
+  (setf rocks (remove r rocks)))
+    
+
+(defun rock-collide (r1 r2)
+  (draw-mob r1 0)
+  (draw-mob r2 0)
+  (setf rocks (remove r1 (remove r2 rocks))))
+
+
+(defun shot-collide (s r)
+  (draw-mob s 0)
+  (draw-mob r 0)
+  (setf shots (remove s shots))
+  (setf rocks (remove r rocks)))
+
+
+(defun check-collision ()
+  (dolist (r rocks)
+    (if (intersects? ship r)
+        (ship-collide r))
+    (dolist (s shots)
+      (if (intersects? s r)
+          (shot-collide s r)))
+    (dolist (r2 rocks)
+      (if (and (not (eq r r2)) (intersects? r r2))
+          (rock-collide r r2)))))
+                 
+
+(defun rock-vertices (max-radius)
+  (let ((vertices nil))
+    (dotimes (i *rock-sides* (reverse vertices))
+      (let ((theta (* i (/ 2pi *rock-sides*)))
+            (radius (* max-radius (- 1.0 (random 0.6)))))
+        (setf vertices (cons (list radius theta) vertices))))))
+
+
+(defvar *rock-starting-points* 
+  (list (list 0 0) (list *center-x* 0) (list *display-width* 0)
+        (list 0 *center-y*) (list *display-width* *center-y*)
+        (list 0 *display-height*) (list *center-x* *display-height*) (list *display-width* *display-height*)))
+
+
+(defun fire-shot ()
+  (when (and (< (length shots) *max-shots*) (> (millis) (+ last-shot-time *min-shot-delay*)))
+    (setf last-shot-time (millis))
+    (let ((start-pos (car (screen-points ship)))
+          (facing (cdr (assoc 'facing ship))))
+      (setf shots
+            (cons
+               (make-mob
+                 start-pos
+                 (polar->rect (list *shot-vel* facing))
+                 (list 0.0 0.0)
+                 1
+                 facing
+                 0
+                 (list (list 1 facing) (list 2 facing)))
+               shots))
+      (setf (car shots) (cons (cons 'fire-time (millis)) (car shots))))))
+          
+
+(defun expire-shots ()
+  (setf shots (remove-if (lambda (s) (< (cdr (assoc 'fire-time s)) (- (millis) *shot-life*))) shots)))
+   
+
+(defun init ()
+  (defvar rocks nil)
+  (dotimes (i *num-rocks*)
+    (setf rocks
+          (cons
+              (make-mob
+                (nth (random 8) *rock-starting-points*)
+                (list (+ -1.0 (random 2.0)) (+ -1.0 (random 2.0)))
+                (list 0.0 0.0)
+                *rock-radius*
+                (deg->rad 0.0)
+                (+ (- 0 *rock-max-rotation*) (random (* *rock-max-rotation* 2)))
+                (rock-vertices *rock-radius*))
+              rocks)))
+  (defvar shots nil)
+  (defvar last-shot-time 0)
+  (defvar *lives* 3)
+  (defvar ship (make-mob
+                (list *center-x* *center-y*)                 
+                (list 0.0 0.0)                               
+                (list 0.0 0.0)                               
+                *ship-radius*                                
+                (deg->rad -90.0)
+                0.0
+                (list (list *ship-radius* (deg->rad 0.0))    
+                      (list *ship-radius* (deg->rad 140.0))
+                      (list (/ *ship-radius* 2) (deg->rad 180.0))
+                      (list *ship-radius* (deg->rad -140))))))
+
+
+;; testing routines
+
+(dotimes (i 64)
+  (draw-mob ship 0)
+  (setf (cdr (assoc 'facing ship)) (- (cdr (assoc 'facing ship)) (/ pi 32)))
+  (draw-mob ship 65535)
+  (delay 10))
+  
+(screen-points ship)
+(draw-mob ship 65535)
+
+(defvar *buttons* 0)
+(fill-screen)
+
+(defun play-game ()
+  (init)
+  (loop
+   (setf *buttons* (read-badge-buttons))
+   (dolist (r rocks) (draw-mob r 0))
+   (dolist (s shots) (draw-mob s 0))
+   (draw-mob ship 0)
+   (if (button-pressed *buttons* *buttonUP*) (accel-mob ship (list *ship-thrust* (cdr (assoc 'facing ship)))))
+   (if (button-pressed *buttons* *buttonLEFT*) (rotate-mob ship (- 0.0 *rotate-vel*)))
+   (if (button-pressed *buttons* *buttonRIGHT*) (rotate-mob ship *rotate-vel*))
+   (if (button-pressed *buttons* *buttonA*) (fire-shot))
+   (if (button-pressed *buttons* *buttonSELECT*) (return))
+   (dotimes (i *lives*) (set-neopixel-color i 0 1 0))
+   (dotimes (i (- 5 *lives*)) (set-neopixel-color (- 4 i) 0 0 0))
+   (if (<= *lives* 0) (return))
+   (dolist (r rocks)
+     (rotate-mob r (cdr (assoc 'rotation r)))
+     (update-mob-pos r)
+     (draw-mob r 65535))
+   (expire-shots)
+   (dolist (s shots)
+     (update-mob-pos s)
+     (draw-mob s 65535))
+   (update-mob-pos ship)
+   (check-collision)
+   (draw-mob ship 65535)
+   (delay 20)))
+
+(play-game)
+
+(fill-screen)
+
+(setf *lives* 0)
+
+~
+
+(polar->rect (list 1 -1.5708))
+(vector-add (list 80 64) (list 0 -1))
+
+(accel-mob ship (list *ship-thrust* (cdr (assoc 'facing ship))))
+(rotate-mob ship pi/2)
+(vector-add (cdr (assoc 'pos ship)) (cdr (assoc 'vel ship)))
+(setf (cdr (assoc 'pos ship)) (vector-add (cdr (assoc 'pos ship)) (cdr (assoc 'vel ship))))
+(wrap-mob-on-screen ship)
+(update-mob-pos ship)
+ship

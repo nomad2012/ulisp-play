@@ -1,0 +1,46 @@
+;; lisp routines specific to the Adafruit PyBadge/Edge Badge
+
+(defun blink (&optional x)
+  (pinmode :led-builtin t)
+  (digitalwrite :led-builtin x)
+  (delay 1000)
+  (blink (not x)))
+
+(blink)
+~
+
+(defun pulse ()
+  (let (down)
+    (loop
+     (dotimes (x 256) 
+       (delay 5) 
+       (analogwrite :led-builtin (if down (- 255 x) x)))
+     (setq down (not down)))))
+
+(pulse)
+~
+
+(defun readbadgebuttons ()
+  (let ((buttons 0) (clock 48) (data 49) (latch 50))
+    (pinmode clock t) (digitalwrite clock 0)
+    (pinmode latch t) (digitalwrite latch 1)
+    (pinmode data nil)
+    (digitalwrite latch 0) (digitalwrite latch 1)
+    (dotimes (b 8 buttons)
+      (setq
+       buttons
+       (logior (ash buttons 1) (if (digitalread data) 1 0)))
+      (digitalwrite clock 1) (digitalwrite clock 0))))
+
+(readbadgebuttons)
+
+
+;;; SOUND
+
+;; enable amplifier
+(digitalwrite 51 1)
+
+(defun sound ()
+  (dotimes (y 96) (dotimes (x y) (analogwrite 14 (* 16 x)))))
+
+(dotimes (a 8) (sound))

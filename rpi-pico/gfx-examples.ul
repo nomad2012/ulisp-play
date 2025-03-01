@@ -1,0 +1,131 @@
+;; http://www.ulisp.com/show?2YRM
+;; ulisp graphics examples
+
+;; these are for the LilyGo T-Deck
+(defvar *lcd-width* 320)
+(defvar *lcd-height* 240)
+
+;; these are for the Adafruit Edge Badge
+(defvar *lcd-width* 160)
+(defvar *lcd-height* 128)
+
+;; these are for the 3.5 inch TFT LCD Breakout
+(defvar *lcd1-width* 480)
+(defvar *lcd1-height* 320)
+
+;; these are for the 2.0 inch TFT ST7789 breakout
+(defvar *lcd2-width* 320)
+(defvar *lcd2-height* 240)
+ 
+(defvar *half-width* (/ *lcd-width* 2))
+(defvar *half-height* (/ *lcd-height* 2))
+
+(defun rgb (r g b)
+  (logior (ash (logand r #xf8) 8) (ash (logand g #xfc) 3) (ash b -3)))
+
+(defvar *orange* (rgb 255 128 0))
+
+(defun plot (width height)
+  (set-rotation 1)
+  (fill-screen)
+  (let ((halfw (/ width 2)) (halfh (/ height 2)))
+    (dotimes (xx width)
+      (let ((x (- xx halfw)))
+        (dotimes (yy height)
+          (let* ((y (- yy halfh))
+                 (f (truncate (+ (* x (+ x y)) (* y y)) 8)))
+            (draw-pixel xx yy (rgb (+ f 160) f (+ f 80)))))))))
+
+(plot *lcd-width* *lcd-height*)
+(with-display 1 (plot *lcd1-width* *lcd1-height*))
+(with-display 2 (plot *lcd2-width* *lcd2-height*))
+ 
+
+(defun hsv (h s v)
+  (let* ((chroma (* v s))
+         (x (* chroma (- 1 (abs (- (mod (/ h 60) 2) 1)))))
+         (m (- v chroma))
+         (i (truncate h 60))
+         (params (list chroma x 0 0 x chroma))
+         (r (+ m (nth i params)))
+         (g (+ m (nth (mod (+ i 4) 6) params)))
+         (b (+ m (nth (mod (+ i 2) 6) params))))
+    (rgb (round (* r 255)) (round (* g 255)) (round (* b 255)))))
+
+
+(defun mandelbrot (width height x0 y0 scale)
+  (set-rotation 1)
+  (fill-screen)
+  (let ((halfw (/ width 2)) (halfh (/ height 2)))
+    (dotimes (y height)
+      (let ((b0 (+ (/ (- y halfh) halfh scale) y0)))
+        (dotimes (x width)
+          (let* ((a0 (+ (/ (- x halfw) halfh scale) x0))
+                 (c 80) (a a0) (b b0) a2)
+            (loop
+             (setq a2 (+ (- (* a a) (* b b)) a0))
+             (setq b (+ (* 2 a b) b0))
+             (setq a a2)
+             (decf c)
+             (when (or (> (+ (* a a) (* b b)) 4) (zerop c)) (return)))
+            (draw-pixel x y (if (plusp c) (hsv (* 359 (/ c 80)) 1 1) 0))))))))
+
+(for-millis () (mandelbrot *lcd-width* *lcd-height* -0.5 0 1))
+
+(for-millis () (with-display 1 (mandelbrot *lcd1-width* *lcd1-height* -0.5 0 1)))
+(for-millis () (with-display 2 (mandelbrot *lcd2-width* *lcd2-height* -0.5 0 1)))
+
+(for-millis () (with-display 1 (mandelbrot *lcd1-width* *lcd1-height* -0.53 -0.61 11)))
+(for-millis () (with-display 2 (mandelbrot *lcd2-width* *lcd2-height* -0.53 -0.61 11)))
+
+
+(save-image)
+(load-image)
+
+(pprintall)
+(pprint mandelbrot)
+
+(defun gprint (item)
+  (fill-screen)
+  (set-rotation 1)
+  (with-gfx (str)
+            (set-cursor 0 0)
+            (pprint item str)))
+
+(gprint mandelbrot)
+
+(defun gprintall ()
+  (fill-screen)
+  (set-rotation 1)
+  (with-gfx (str)
+    (set-cursor 0 0)
+    (pprintall str)))
+
+(gprintall)
+
+(defun test-flicker ()
+  (fill-screen)
+  (set-text-size 5)
+  (set-text-color (rgb 128 255 0) 0)
+  (dotimes (i 101)
+    (with-gfx (str)
+              (set-cursor 200 140)
+              (format str "~3,'0D" (- 100 i))
+              (delay 50))))
+
+(test-flicker)
+
+(defun clear ()
+  (fill-screen)
+  (set-cursor 0 0))
+
+(clear)
+
+(with-log (str) (pprint mandelbrot str))
+
+(set-display 2)
+
+(plot 320 240)
+
+(mandelbrot 320 240 -0.53 -0.61 8)
+
